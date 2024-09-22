@@ -30,4 +30,4 @@ The analysis reveals a strong relationship between **community welfare** and **h
 - The first canonical correlation was significant at **0.870**, suggesting a strong link between sanitation practices and improved community welfare.
 - Further canonical variates showed no significant correlations, indicating that the first pair of canonical variates captured most of the shared variance.
 
-For a more detailed breakdown of the results, refer to the **R Markdown** file or the [paper](Linking Sanitation and Water Access to Socio Economic Outcomes.pdf).
+For a more detailed breakdown of the results, refer to the **R Markdown** file or the .pdf file.
