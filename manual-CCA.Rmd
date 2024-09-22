@@ -1,0 +1,505 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r}
+if (!require(pacman)) install.packages("pacman")
+library(pacman)
+```
+
+# Dataset
+
+```{r}
+data <- readxl::read_excel('./dataset.xlsx', sheet = 'raw_data')
+data <- data[-1]
+data
+
+colnames(data) <- c("Y1", "Y2", "Y3", "X1", "X2", "X3")
+```
+
+# EDA
+
+```{r}
+pacman::p_load("summarytools")
+descr(data, order = "p")
+```
+
+```{r}
+pacman::p_load("ggridges", "ggplot2", "dplyr", "tidyverse", "ggpubr", "GGally")
+
+df_long <- data %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+# data.norm <- df_long %>% group_by(variable) %>% summarize(mean = mean(value), sd = sd(value), min = min(value), max = max(value))
+
+# Create the ridge plot
+ggplot(df_long, aes(x = value, y = variable)) +
+  geom_density_ridges(scale = 0.9, alpha = 0.7) +
+  theme_ridges() +
+  labs(title = "Density Plot of Multiple Variables",
+       x = "Value",
+       y = "Variable")
+```
+
+```{r}
+cor(data)
+```
+
+# Assumption
+
+## Linearity
+
+```{r, warning=FALSE, message = FALSE}
+
+ggpairs(data[, c("Y1", "Y2", "Y3", "X1", "X2", "X3")])
+```
+
+Mayoritas pasangan data harus berkorelasi signifikan
+
+```{r}
+# cor.test(data[["Y1"]], data[["Y2"]])
+# cor.test(data[["Y1"]], data[["Y3"]])
+# cor.test(data[["Y2"]], data[["Y3"]])
+# 
+# cor.test(data[["X1"]], data[["X2"]])
+# cor.test(data[["X1"]], data[["X3"]])
+# cor.test(data[["X2"]], data[["X3"]])
+# 
+# cor.test(data[["Y1"]], data[["X1"]])
+# cor.test(data[["Y1"]], data[["X2"]])
+# cor.test(data[["Y1"]], data[["X3"]])
+# 
+# cor.test(data[["Y2"]], data[["X1"]])
+# cor.test(data[["Y2"]], data[["X2"]])
+# cor.test(data[["Y2"]], data[["X3"]])
+# 
+# cor.test(data[["Y3"]], data[["X1"]])
+# cor.test(data[["Y3"]], data[["X2"]])
+# cor.test(data[["Y3"]], data[["X3"]])
+```
+
+## Normality
+
+```{r}
+# install.packages("mvnormtest")
+library(MVN)
+
+mvn(data[, c("Y1", "Y2", "Y3")], mvnTest = "mardia")$multivariateNormality # For Y variables
+mvn(data[, c("X1", "X2", "X3")], mvnTest = "mardia")$multivariateNormality # For X variables
+```
+
+*LIAT VERDICT 'RESULT' DARI MVN*
+
+### Box-Cox Tranformation
+
+```{r}
+# Load the packages
+library(MASS)
+library(MVN)
+
+# Example dataframe
+Y <- data[,1:3]
+
+# Shift the data if there are non-positive values
+Y$Y1_shifted <- Y$Y1 - min(Y$Y1) + 1
+Y$Y2_shifted <- Y$Y2 - min(Y$Y2) + 1
+
+# Apply the Box-Cox transformation
+bc_Y1 <- boxcox(Y$Y1_shifted ~ 1, lambda = seq(-5, 5, 0.1))
+lambda_Y1 <- bc_Y1$x[which.max(bc_Y1$y)]
+
+bc_Y2 <- boxcox(Y$Y2_shifted ~ 1, lambda = seq(-5, 5, 0.1))
+lambda_Y2 <- bc_Y2$x[which.max(bc_Y2$y)]
+
+# Transform the data
+Y$Y1_transformed_BT <- (Y$Y1_shifted^lambda_Y1 - 1) / lambda_Y1
+Y$Y2_transformed_BT <- (Y$Y2_shifted^lambda_Y2 - 1) / lambda_Y2
+
+# Perform the Mardia test again
+mvn_result <- mvn(Y[, c("Y1_transformed_BT", "Y2_transformed_BT", "Y3")], mvnTest = "mardia")
+
+# Print the result
+print(mvn_result)
+```
+
+### Log Transformation
+
+```{r}
+
+# Apply the log transformation
+Y$Y1_transformed_LT <- log(Y$Y1_shifted)
+Y$Y2_transformed_LT <- log(Y$Y2_shifted)
+
+# Perform the Mardia test again
+mvn_result <- mvn(Y[, c("Y1_transformed_LT", "Y2_transformed_LT", "Y3")], mvnTest = "mardia")
+
+# Print the result
+print(mvn_result)
+```
+
+### Square Root Transformation
+
+```{r}
+
+# Apply the square root transformation
+Y$Y1_transformed_ST <- sqrt(Y$Y1_shifted)
+Y$Y2_transformed_ST <- sqrt(Y$Y2_shifted)
+
+
+# Perform the Mardia test again
+mvn_result <- mvn(Y[, c("Y1_transformed_ST", "Y2_transformed_ST", "Y3")], mvnTest = "mardia")
+
+# Print the result
+print(mvn_result)
+```
+
+Use Box-Cox Transformation
+
+```{r}
+data$Y1 <- Y$Y1_transformed_BT
+data$Y2 <- Y$Y2_transformed_BT
+```
+
+## Multicolinearity
+
+```{r}
+library(car)
+
+vif(lm(rep(1, nrow(data))~Y1+Y2+Y3, data=data[1:3]))
+vif(lm(rep(1, nrow(data))~X1+X2+X3, data=data[4:6]))
+```
+
+# Correlation Matrix (Rho) Partition
+
+```{r}
+# TODOS:
+# EDIT THE PARTITION NUMBERS. note*): p <= q
+
+p <- 3
+q <- 3
+
+rho <- cor(data)
+
+rho11 <- rho[1:p, 1:p]
+rho12 <- rho[1:p, (p+1):(p+q)]
+rho21 <- rho[(p+1):(p+q), 1:(p)]
+rho22 <- rho[(p+1):(p+q), (p+1):(p+q)]
+```
+
+# Root and/or Square Root Matrices
+
+```{r}
+library(expm)
+
+rho11.inv.sqrt <- solve(sqrtm(rho11))
+rho11.inv = solve(rho11)
+rho22.inv.sqrt = solve(sqrtm(rho22))
+rho22.inv <- solve(rho22)
+```
+
+# Compute Matrix A and B
+
+$$
+A = P_{11}^{-1/2}P_{12}P_{22}^{-1}P_{21}P_{11}^{-1/2}
+$$ $$
+B = P_{22}^{-1/2}P_{21}P_{11}^{-1}P_{12}P_{22}^{-1/2}
+$$
+
+```{r}
+mat.A <- rho11.inv.sqrt %*% rho12 %*% rho22.inv %*% rho21 %*% rho11.inv.sqrt
+mat.B <- rho22.inv.sqrt %*% rho21 %*% rho11.inv %*% rho12 %*% rho22.inv.sqrt
+```
+
+# Canonical Correlation Function Analysis
+
+## Canonical Weight (Coefficient)
+
+$$
+\begin{split}
+U_i&=e'_k\Sigma^{-1/2}_{11}X^{(1)} \\
+&= a'_kX^{(1)}
+\end{split}
+$$
+
+```{r}
+eigen.A <- eigen(mat.A)
+eigen.A
+```
+
+```{r}
+e1 <- eigen.A$vectors[,1]
+e2 <- eigen.A$vectors[,2]
+e3 <- eigen.A$vectors[,3]
+
+e1
+e2
+e3
+```
+
+```{r}
+a1 <- e1 %*% rho11.inv.sqrt
+a2 <- e2 %*% rho11.inv.sqrt
+a3 <- e3 %*% rho11.inv.sqrt
+
+a1
+a2
+a3
+```
+
+$$
+\begin{split}
+V_i&=f'_k\Sigma^{-1/2}_{22}X^{(2)} \\
+&= b'_kX^{(1)}
+\end{split}
+$$
+
+```{r}
+eigen.B <- eigen(mat.B)
+eigen.B
+```
+
+```{r}
+f1 <- eigen.B$vectors[,1]
+f2 <- eigen.B$vectors[,2]
+f3 <- eigen.B$vectors[,3]
+
+f1
+f2
+f3
+```
+
+```{r}
+b1 <- f1 %*% rho22.inv.sqrt
+b2 <- f2 %*% rho22.inv.sqrt
+b3 <- f3 %*% rho22.inv.sqrt
+
+b1
+b2
+b3
+```
+
+## Canonical Correlation
+
+$$
+Corr\left(U_k,V_k\right) = \rho^*_k, \quad k=1,2,\ldots,p \\
+$$
+
+$$
+\text{where } \rho_1^{*2}\ge\rho_2^{*2}\ge\ldots\ge\rho_p^{*2} 
+\text{ are the nonzero eigenvalues of }A; \\
+\text{ (or, equivalently, the largest eigenvalues of } B)
+$$
+
+```{r}
+r.canon <- sqrt(eigen.A$values)
+r.canon
+```
+
+$$
+Cor(U_1,V_1)=0.87 \\
+Cor(U_2,V_2)=0.45 \\
+Cor(U_3,V_3)=0.06
+$$
+
+## First Canonic Function Variables
+
+```{r}
+a1
+b1
+```
+
+$$
+U_1= 0.45X_1^{(1)}-0.65X_2^{(1)}+0.16X_3^{(1)} \\
+V_1=-0.34X_1^{(2)}-0.42X_2^{(2)}+0.40X_3^{(2)}
+$$
+
+```{r}
+U1 <- as.matrix(data[,1:3]) %*% t(a1)
+U2 <- as.matrix(data[,1:3]) %*% t(a2)
+U3 <- as.matrix(data[,1:3]) %*% t(a3)
+
+V1 <- as.matrix(data[,4:6]) %*% t(b1)
+V2 <- as.matrix(data[,4:6]) %*% t(b2)
+V3 <- as.matrix(data[,4:6]) %*% t(b3)
+```
+
+## Canonical Loadings
+
+```{r}
+U1.load <- cor(data[,1:3], U1)
+U2.load <- cor(data[,1:3], U2)
+U3.load <- cor(data[,1:3], U3)
+
+V1.load <- cor(data[,4:6], V1)
+V2.load <- cor(data[,4:6], V2)
+V3.load <- cor(data[,4:6], V3)
+```
+
+```{r}
+t(U1.load)
+t(V1.load)
+```
+
+$$
+Cor(X_1^{(1)}, U_1) = 0.99 \\ 
+Cor(X_2^{(1)}, U_1) = -0.36 \\ 
+Cor(X_3^{(1)}, U_1) = -0.40 \\
+Cor(X_1^{(2)}, V_1) = -0.92 \\
+Cor(X_2^{(2)}, V_1) = -0.73 \\
+Cor(X_3^{(2)}, V_1) = 0.82
+$$
+
+# Hypothesis Testing
+
+## Simultaneous Test (serentak)
+
+Independence of Two Set Variables
+
+### Hypothesis:
+
+$$
+H_0: \Sigma{xy} = O\\ H_1: \Sigma{xy} \ne O 
+$$
+
+$$ 
+\Lambda_1=\frac{|S|}{|S_{yy}||S_{xx}|}=\frac{|R|}{|R_{yy}||R_{xx}|} 
+$$
+
+### Test statistics
+
+```{r}
+lambda.test <- det(rho) / (det(rho11) * det(rho22))
+lambda.test
+
+## will have the same value as Lambda_1 in partial test
+```
+
+### Critical values
+
+$$
+\Lambda_\alpha=\Lambda_{p,q, n-1-q}\\
+\text{where }p\le q  ; \  p,q \text{ are number of variables in each group}
+$$
+
+```{r}
+lambda.crit <- 0.309
+lambda.crit
+```
+
+```{r}
+lambda.test <= lambda.crit
+```
+
+## Partial Test (parsial)
+
+### Hypothesis
+
+$$
+H_0: \rho_1=\rho_2=\rho_3 = 0 \\
+H_1:\text{at least } \rho_1 \ne 0
+$$ $$
+H_0: \rho_2=\rho_3=0 \\
+H_1:\text{at least } \rho_2 \ne 0
+$$
+
+$$
+H_0: \rho_3=0 \\
+H_1:\text{at least } \rho_3 \ne 0
+$$ \### Test Statistics $$
+\Lambda_k =\prod^s_{i=k}{(1-r^2_i)} \\
+\text{s is the canonical correlation count or minimum variable in group} 
+$$
+
+```{r}
+
+Lambda1 <- prod(1-eigen.A$values)
+Lambda2 <- prod(1-eigen.A$values[2:3])
+Lambda3 <- prod(1-eigen.A$values[3])
+
+Lambda1
+Lambda2
+Lambda3
+
+Lambda <- c(Lambda1, Lambda2,Lambda3)
+```
+
+### Critical Values
+
+$$
+\begin{split}
+\Lambda_{crit} &= \Lambda_\alpha;p;vH;vE \\
+&=\Lambda_{\alpha;p-k+1;q-k+1; n-k-q }
+\end{split}
+$$
+
+### Alternative Test Statistics
+
+F-test value acts like an extension and can be approximated using lambda
+$$
+F=\frac{1-\Lambda_k^{1/t}df_2}{\Lambda_k^{1/t}df_1}
+$$ \### F-value Function
+
+```{r}
+# p <- 3
+# q <- 3
+# k <- 1
+
+canonicalPartialTest <- function(p, q) {
+  for (k in 1:p) {
+    print(paste0("lambda_", k))
+    print("===================")
+    
+    P <- p-k+1
+    vH <- q-k+1
+    vE <- nrow(data)-k-q
+    
+    w = nrow(data)-(1/2)*(p+q+3)
+    t = sqrt(
+      ((P)^2*(vH)^2-4)/
+        ((P)^2+(vH)^2-5)
+    )
+    print(paste0("w: ", w))
+    print(paste0("t: ", t))
+    # t = sqrt(((p-k+1)^2*(q-k+1)^2-4)/((p-k+1)^2+(q-k+1)^2-5))
+    
+    df1 <- round((P) * (vH))
+    df2 <- round(w*t-(1/2)*(df1)+1)
+    
+    print(paste0("df1: ", df1))
+    print(paste0("df2: ", t))
+    
+    F.test<- ((1-Lambda[k]^(1/t))/(Lambda[k]^(1/t))) * (df2/df1)
+    print(paste0("F test: ", F.test))
+    
+    F.crit <- qf(1-0.05, df1, df2)
+    print(paste0("F crit: ", F.crit))
+    
+    if (F.test > F.crit) {
+      print("reject H0")
+    }
+    else {
+      print("failed to reject H0")
+    }
+    print("===================")
+  }
+}
+```
+
+```{r}
+canonicalPartialTest(p, q)
+```
+
+# CC Library
+
+```{r}
+library(CCA)
+pacman::p_load("CCA")
+
+cc(data[,1:3], data[,4:6])
+```
